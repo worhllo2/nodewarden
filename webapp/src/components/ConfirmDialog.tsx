@@ -1,5 +1,5 @@
+import { useEffect, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { Check, X } from 'lucide-preact';
 import { t } from '@/lib/i18n';
 
 interface ConfirmDialogProps {
@@ -20,14 +20,32 @@ interface ConfirmDialogProps {
 }
 
 export default function ConfirmDialog(props: ConfirmDialogProps) {
-  if (!props.open) return null;
+  const [present, setPresent] = useState(props.open);
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    if (props.open) {
+      setPresent(true);
+      setClosing(false);
+      return;
+    }
+    if (!present) return;
+    setClosing(true);
+    const timer = window.setTimeout(() => {
+      setPresent(false);
+      setClosing(false);
+    }, 240);
+    return () => window.clearTimeout(timer);
+  }, [props.open, present]);
+
+  if (!present) return null;
   return (
-    <div className="dialog-mask">
+    <div className={`dialog-mask ${props.open && !closing ? 'open' : ''} ${closing ? 'closing' : ''}`}>
       <form
-        className="dialog-card"
+        className={`dialog-card ${props.open && !closing ? 'open' : ''} ${closing ? 'closing' : ''}`}
         onSubmit={(e) => {
           e.preventDefault();
-          if (props.confirmDisabled) return;
+          if (props.confirmDisabled || closing) return;
           props.onConfirm();
         }}
       >
@@ -39,7 +57,6 @@ export default function ConfirmDialog(props: ConfirmDialogProps) {
           className={`btn ${props.danger ? 'btn-danger' : 'btn-primary'} dialog-btn`}
           disabled={props.confirmDisabled}
         >
-          <Check size={14} className="btn-icon" />
           {props.confirmText || t('txt_yes')}
         </button>
         {!props.hideCancel && (
@@ -52,7 +69,6 @@ export default function ConfirmDialog(props: ConfirmDialogProps) {
               props.onCancel();
             }}
           >
-            <X size={14} className="btn-icon" />
             {props.cancelText || t('txt_no')}
           </button>
         )}

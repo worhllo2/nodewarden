@@ -57,10 +57,67 @@ const IMPORT_ROUTE_PATHS = [IMPORT_ROUTE, '/tools/import', '/tools/import-export
 const IMPORT_ROUTE_ALIASES: ReadonlySet<string> = new Set(IMPORT_ROUTE_PATHS.filter((path) => path !== IMPORT_ROUTE));
 const SETTINGS_HOME_ROUTE = '/settings';
 const SETTINGS_ACCOUNT_ROUTE = '/settings/account';
+const THEME_STORAGE_KEY = 'nodewarden.theme.preference.v1';
 const SIGNALR_RECORD_SEPARATOR = String.fromCharCode(0x1e);
 const SIGNALR_UPDATE_TYPE_SYNC_VAULT = 5;
 const SIGNALR_UPDATE_TYPE_LOG_OUT = 11;
 const SIGNALR_UPDATE_TYPE_DEVICE_STATUS = 12;
+
+type ThemePreference = 'system' | 'light' | 'dark';
+const MAGNETIC_SELECTOR = '.topbar .btn, .topbar .user-chip, .side-link, .mobile-tab';
+
+function installMagneticUiFeedback() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+  if (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {};
+  if (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) return () => {};
+
+  const resetNode = (node: HTMLElement) => {
+    node.style.setProperty('--mag-x', '0px');
+    node.style.setProperty('--mag-y', '0px');
+    node.style.removeProperty('--mx');
+    node.style.removeProperty('--my');
+  };
+
+  const onPointerMove = (event: PointerEvent) => {
+    const node = event.target instanceof Element ? event.target.closest<HTMLElement>(MAGNETIC_SELECTOR) : null;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    const localX = event.clientX - rect.left;
+    const localY = event.clientY - rect.top;
+    const dx = (localX - rect.width / 2) / Math.max(rect.width / 2, 1);
+    const dy = (localY - rect.height / 2) / Math.max(rect.height / 2, 1);
+    node.style.setProperty('--mx', `${localX}px`);
+    node.style.setProperty('--my', `${localY}px`);
+    node.style.setProperty('--mag-x', `${dx * 6}px`);
+    node.style.setProperty('--mag-y', `${dy * 4}px`);
+  };
+
+  const onPointerLeave = (event: Event) => {
+    const node = event.target instanceof Element ? event.target.closest<HTMLElement>(MAGNETIC_SELECTOR) : null;
+    if (!node) return;
+    resetNode(node);
+  };
+
+  document.addEventListener('pointermove', onPointerMove, { passive: true });
+  document.addEventListener('pointerleave', onPointerLeave, true);
+
+  return () => {
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerleave', onPointerLeave, true);
+  };
+}
+
+function readThemePreference(): ThemePreference {
+  if (typeof window === 'undefined') return 'system';
+  const stored = String(window.localStorage.getItem(THEME_STORAGE_KEY) || '').trim();
+  if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
+  return 'system';
+}
+
+function resolveSystemTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'light';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
 
 export default function App() {
   const initialBootstrap = useMemo(() => readInitialAppBootstrapState(), []);
@@ -100,6 +157,8 @@ export default function App() {
   const [disableTotpOpen, setDisableTotpOpen] = useState(false);
   const [disableTotpPassword, setDisableTotpPassword] = useState('');
   const [recoverValues, setRecoverValues] = useState({ email: '', password: '', recoveryCode: '' });
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => readThemePreference());
+  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(() => resolveSystemTheme());
 
   const [confirm, setConfirm] = useState<AppConfirmState | null>(null);
   const [mobileLayout, setMobileLayout] = useState(false);
@@ -174,6 +233,41 @@ export default function App() {
     media.addListener(sync);
     return () => media.removeListener(sync);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const sync = () => setSystemTheme(media.matches ? 'dark' : 'light');
+    sync();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', sync);
+      return () => media.removeEventListener('change', sync);
+    }
+    media.addListener(sync);
+    return () => media.removeListener(sync);
+  }, []);
+
+  const resolvedTheme = themePreference === 'system' ? systemTheme : themePreference;
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme;
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themePreference);
+  }, [themePreference]);
+
+  useEffect(() => installMagneticUiFeedback(), []);
+
+  function handleToggleTheme() {
+    setThemePreference((prev) => {
+      const current = prev === 'system' ? systemTheme : prev;
+      return current === 'dark' ? 'light' : 'dark';
+    });
+  }
 
   function setSession(next: SessionState | null) {
     sessionRef.current = next;
@@ -974,9 +1068,13 @@ export default function App() {
     onCreateVaultItem: vaultSendActions.createVaultItem,
     onUpdateVaultItem: vaultSendActions.updateVaultItem,
     onDeleteVaultItem: vaultSendActions.deleteVaultItem,
+    onArchiveVaultItem: vaultSendActions.archiveVaultItem,
+    onUnarchiveVaultItem: vaultSendActions.unarchiveVaultItem,
     onBulkDeleteVaultItems: vaultSendActions.bulkDeleteVaultItems,
     onBulkPermanentDeleteVaultItems: vaultSendActions.bulkPermanentDeleteVaultItems,
     onBulkRestoreVaultItems: vaultSendActions.bulkRestoreVaultItems,
+    onBulkArchiveVaultItems: vaultSendActions.bulkArchiveVaultItems,
+    onBulkUnarchiveVaultItems: vaultSendActions.bulkUnarchiveVaultItems,
     onBulkMoveVaultItems: vaultSendActions.bulkMoveVaultItems,
     onVerifyMasterPassword: vaultSendActions.verifyMasterPassword,
     onCreateFolder: vaultSendActions.createFolder,
@@ -1131,8 +1229,11 @@ export default function App() {
         settingsAccountRoute={SETTINGS_ACCOUNT_ROUTE}
         importRoute={IMPORT_ROUTE}
         isImportRoute={isImportRoute}
+        darkMode={resolvedTheme === 'dark'}
+        themeToggleTitle={resolvedTheme === 'dark' ? t('txt_switch_to_light_mode') : t('txt_switch_to_dark_mode')}
         onLock={handleLock}
         onLogout={handleLogout}
+        onToggleTheme={handleToggleTheme}
         mainRoutesProps={mainRoutesProps}
       />
 
